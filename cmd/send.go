@@ -123,11 +123,18 @@ var sendCmd = &cobra.Command{
 			defer d.Close()
 
 			fmt.Fprintf(os.Stderr, "Bootstrapping DHT...\n")
-			time.Sleep(3 * time.Second)
+			node.WaitForBootstrap(ctx, h, d, 5*time.Second)
 
-			fmt.Fprintf(os.Stderr, "Finding peer %s...\n", toID.String()[:16]+"...")
+			// Try 1: Direct DHT FindPeer
+			fmt.Fprintf(os.Stderr, "Finding peer %s via DHT...\n", toID.String()[:16]+"...")
 			addrInfo, err := node.FindPeer(ctx, d, toID)
 			if err != nil {
+				// Try 2: Rendezvous discovery
+				fmt.Fprintf(os.Stderr, "DHT lookup failed, trying rendezvous discovery...\n")
+				addrInfo, err = node.FindPeersRendezvous(ctx, h, d, toID)
+			}
+			if err != nil {
+				// All methods failed — queue to outbox
 				hollerDir, dirErr := identity.HollerDir()
 				if dirErr != nil {
 					return fmt.Errorf("peer not found and cannot save to outbox: %w", dirErr)
@@ -139,7 +146,10 @@ var sendCmd = &cobra.Command{
 				return nil
 			}
 
-			if err := h.Connect(ctx, addrInfo); err != nil {
+			fmt.Fprintf(os.Stderr, "Found peer, connecting...\n")
+			connectCtx, connectCancel := context.WithTimeout(ctx, 15*time.Second)
+			defer connectCancel()
+			if err := h.Connect(connectCtx, addrInfo); err != nil {
 				hollerDir, _ := identity.HollerDir()
 				message.SaveToOutbox(hollerDir, env)
 				fmt.Fprintf(os.Stderr, "Cannot connect to peer — message queued in outbox\n")

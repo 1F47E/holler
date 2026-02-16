@@ -79,8 +79,29 @@ var listenCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "Daemon mode: writing to %s\n", message.InboxPath(hollerDir))
 		}
 
+		// Wait for bootstrap connections
+		node.WaitForBootstrap(ctx, h, d, 5*time.Second)
+
+		// Advertise on DHT so senders can find us
+		node.Advertise(ctx, h, d)
+		fmt.Fprintf(os.Stderr, "Advertised on DHT — senders can now find us\n")
+
 		// Start outbox retry loop
 		go retryOutboxLoop(ctx, h, d, hollerDir)
+
+		// Re-advertise periodically (DHT records expire)
+		go func() {
+			ticker := time.NewTicker(10 * time.Minute)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					node.Advertise(ctx, h, d)
+				}
+			}
+		}()
 
 		<-ctx.Done()
 		fmt.Fprintf(os.Stderr, "\nShutting down...\n")

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"github.com/1F47E/holler/identity"
+	"github.com/1F47E/holler/node"
 	"github.com/spf13/cobra"
 )
 
@@ -13,6 +14,7 @@ var rootCmd = &cobra.Command{
 
 func init() {
 	rootCmd.PersistentFlags().StringVar(&identity.DirOverride, "dir", "", "data directory (default ~/.holler)")
+	rootCmd.PersistentFlags().BoolVarP(&node.Verbose, "verbose", "v", false, "verbose debug logging")
 }
 
 func Execute() error {
