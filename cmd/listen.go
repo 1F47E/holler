@@ -65,9 +65,10 @@ var listenCmd = &cobra.Command{
 			if err != nil {
 				return
 			}
-			if listenDaemon {
-				message.AppendToInbox(hollerDir, data)
-			} else {
+			// Always log to inbox for persistent history
+			message.AppendToInbox(hollerDir, data)
+			if !listenDaemon {
+				// Also print to stdout for piping
 				fmt.Println(string(data))
 			}
 		})

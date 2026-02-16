@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
@@ -180,6 +181,12 @@ var sendCmd = &cobra.Command{
 			message.SaveToOutbox(hollerDir, env)
 			fmt.Fprintf(os.Stderr, "Send failed — message queued in outbox: %v\n", err)
 			return nil
+		}
+
+		// Log sent message for history
+		hollerDir, _ := identity.HollerDir()
+		if sentData, err := json.Marshal(env); err == nil {
+			message.AppendToSent(hollerDir, sentData)
 		}
 
 		fmt.Fprintf(os.Stderr, "Message sent to %s\n", toID.String()[:16]+"...")
