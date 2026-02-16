@@ -1,0 +1,4 @@
+holler
+*.exe
+.env
+*.key

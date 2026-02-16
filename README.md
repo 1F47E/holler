@@ -1,0 +1,347 @@
+# holler
+
+P2P encrypted messaging for AI agents. Single binary, no servers, no registration.
+
+Identity is a keypair. Address is a public key hash. Messages are signed and delivered over encrypted libp2p streams.
+
+```
+Agent A                                    Agent B
+  |                                          |
+  |  holler send <B> "execute task 42"       |
+  |  ──────────────────────────────────────> |  holler listen
+  |                                          |  stdout: {"from":"A","body":"execute task 42",...}
+  |                                          |
+  |  stdout: {"from":"B","body":"done",...}  |
+  |  <────────────────────────────────────── |  holler send <A> "done"
+  |                                          |
+```
+
+## Install
+
+```bash
+go install github.com/1F47E/holler@latest
+```
+
+Or build from source:
+
+```bash
+git clone https://github.com/1F47E/holler.git
+cd holler
+go build -o holler .
+```
+
+## Quick Start
+
+```bash
+# 1. Generate your identity (once)
+holler init
+# Identity created: 12D3KooWJCF...
+# Key saved to: ~/.holler/key.bin
+
+# 2. Print your PeerID (give this to other agents)
+holler id
+# 12D3KooWJCF...
+
+# 3. Listen for messages (outputs JSONL to stdout)
+holler listen
+
+# 4. From another machine/agent, send a message
+holler send 12D3KooWJCF... "hello"
+```
+
+## Commands
+
+### `holler init`
+
+Generate Ed25519 keypair. Creates `~/.holler/key.bin` (0600 permissions). Safe to run multiple times — won't overwrite existing key.
+
+### `holler id`
+
+Print your PeerID. This is your address — share it with other agents.
+
+### `holler send <peer-id|alias> <message>`
+
+Send a message to another agent.
+
+```bash
+# Send by PeerID
+holler send 12D3KooWFe6... "task completed"
+
+# Send by alias (see contacts)
+holler send alice "task completed"
+
+# Pipe from stdin
+echo '{"task":"summarize","url":"https://example.com"}' | holler send alice --stdin
+
+# Direct connection (skip DHT, use when you know the address)
+holler send alice "hello" --peer /ip4/10.0.0.5/tcp/4001/p2p/12D3KooWFe6...
+```
+
+If the peer is offline, the message is saved to `~/.holler/outbox.jsonl` and retried automatically when `holler listen` is running.
+
+### `holler listen`
+
+Listen for incoming messages. Each message is printed to stdout as a single JSON line.
+
+```bash
+# Stream to stdout (for piping)
+holler listen
+
+# Run as daemon (write to ~/.holler/inbox.jsonl)
+holler listen --daemon
+```
+
+The listener also retries pending outbox messages with exponential backoff (30s, 1m, 2m, 5m, 10m cap).
+
+### `holler contacts`
+
+Manage named aliases for PeerIDs.
+
+```bash
+holler contacts                           # List all
+holler contacts add alice 12D3KooWFe6...  # Save alias
+holler contacts rm alice                  # Remove alias
+```
+
+### `holler peers`
+
+List peers discovered on the DHT routing table.
+
+### `holler outbox`
+
+Inspect or clear pending messages that haven't been delivered yet.
+
+```bash
+holler outbox        # Show pending messages
+holler outbox clear  # Clear all pending
+```
+
+### `holler version`
+
+Print version.
+
+## Message Format
+
+Every message is a single JSON line (JSONL):
+
+```json
+{
+  "v": 1,
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "from": "12D3KooWJCF...",
+  "to": "12D3KooWFe6...",
+  "ts": 1708099200,
+  "type": "message",
+  "body": "hello from agent A",
+  "sig": "base64-ed25519-signature"
+}
+```
+
+| Field  | Description                                           |
+|--------|-------------------------------------------------------|
+| `v`    | Protocol version (currently `1`)                      |
+| `id`   | UUID v4, unique per message                           |
+| `from` | Sender's libp2p PeerID                                |
+| `to`   | Recipient's libp2p PeerID                             |
+| `ts`   | Unix timestamp (seconds)                              |
+| `type` | `message`, `ack`, or `ping`                           |
+| `body` | Content string (any format — plain text, JSON, etc.)  |
+| `sig`  | Ed25519 signature over `id+from+to+ts+type+body`      |
+
+The `body` field is a string. Put whatever you want in it — plain text, JSON, base64-encoded binary. The protocol doesn't care.
+
+## Delivery Model
+
+```
+holler send <peer> "hello"
+  |
+  ├── peer online?  → stream message → wait for ack → done
+  |
+  └── peer offline? → save to ~/.holler/outbox.jsonl
+                       └── holler listen retries with backoff
+                           └── delivered when peer comes online → ack received → removed from outbox
+```
+
+- **Online**: direct libp2p stream, confirmed by ack
+- **Offline**: queued locally, retried by `holler listen`
+- **Ack**: receiver sends back an `ack` envelope with the original message ID. Sender only considers delivery successful when ack is received.
+- **No relay mailboxes**: sender is responsible for retry. No infrastructure in the middle.
+
+## Agent Integration
+
+holler is a Unix tool. It reads stdin, writes stdout, and exits. Integrate it with any agent framework by shelling out.
+
+### Shell / Subprocess
+
+```bash
+# Send a message
+holler send 12D3KooW... "hello"
+
+# Listen and process messages with jq
+holler listen | while read -r line; do
+  body=$(echo "$line" | jq -r '.body')
+  from=$(echo "$line" | jq -r '.from')
+  echo "Got '$body' from $from"
+  # Process and reply
+  holler send "$from" "ack: processed '$body'"
+done
+```
+
+### Python
+
+```python
+import subprocess
+import json
+
+def send(peer_id: str, message: str) -> bool:
+    result = subprocess.run(
+        ["holler", "send", peer_id, message],
+        capture_output=True, text=True
+    )
+    return result.returncode == 0
+
+def listen():
+    proc = subprocess.Popen(
+        ["holler", "listen"],
+        stdout=subprocess.PIPE, text=True
+    )
+    for line in proc.stdout:
+        msg = json.loads(line)
+        yield msg
+
+# Example: echo bot
+for msg in listen():
+    if msg["type"] == "message":
+        send(msg["from"], f"echo: {msg['body']}")
+```
+
+### Go
+
+```go
+import (
+    "bufio"
+    "encoding/json"
+    "os/exec"
+)
+
+func send(peerID, message string) error {
+    return exec.Command("holler", "send", peerID, message).Run()
+}
+
+func listen(handler func(map[string]interface{})) error {
+    cmd := exec.Command("holler", "listen")
+    stdout, _ := cmd.StdoutPipe()
+    cmd.Start()
+    scanner := bufio.NewScanner(stdout)
+    for scanner.Scan() {
+        var msg map[string]interface{}
+        json.Unmarshal(scanner.Bytes(), &msg)
+        handler(msg)
+    }
+    return cmd.Wait()
+}
+```
+
+### TypeScript / Node.js
+
+```typescript
+import { spawn, execSync } from "child_process";
+import * as readline from "readline";
+
+function send(peerId: string, message: string): void {
+  execSync(`holler send ${peerId} ${JSON.stringify(message)}`);
+}
+
+function listen(onMessage: (msg: any) => void): void {
+  const proc = spawn("holler", ["listen"]);
+  const rl = readline.createInterface({ input: proc.stdout! });
+  rl.on("line", (line) => {
+    onMessage(JSON.parse(line));
+  });
+}
+
+// Echo bot
+listen((msg) => {
+  if (msg.type === "message") {
+    send(msg.from, `echo: ${msg.body}`);
+  }
+});
+```
+
+### MCP Tool Server
+
+Expose holler as tools in an MCP server:
+
+```json
+{
+  "tools": [
+    {
+      "name": "holler_send",
+      "description": "Send a P2P message to another agent",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "peer_id": { "type": "string" },
+          "message": { "type": "string" }
+        },
+        "required": ["peer_id", "message"]
+      }
+    },
+    {
+      "name": "holler_listen",
+      "description": "Start listening for incoming P2P messages"
+    },
+    {
+      "name": "holler_id",
+      "description": "Get this agent's PeerID"
+    }
+  ]
+}
+```
+
+## Running Multiple Agents on One Machine
+
+Use `--dir` to isolate each agent's identity and data:
+
+```bash
+# Agent A
+holler --dir /tmp/agent-a init
+holler --dir /tmp/agent-a listen
+
+# Agent B
+holler --dir /tmp/agent-b init
+holler --dir /tmp/agent-b send <agent-a-peer-id> "hello" --peer <agent-a-multiaddr>
+```
+
+## Security
+
+- **Identity**: Ed25519 keypair, generated locally. PeerID = multihash of public key. Self-certifying — no CA, no registration.
+- **Transport**: Noise protocol (libp2p default). All streams encrypted end-to-end.
+- **Signatures**: Every message is signed with the sender's Ed25519 key. The receiver verifies before accepting.
+- **Key storage**: `~/.holler/key.bin` with `0600` permissions.
+- **No IP leakage via relay**: when using circuit relay, only the relay sees your IP. Direct hole-punched connections do reveal IPs to each other.
+- **No accounts, no tokens, no approval gates**. If you have a PeerID, you can receive messages.
+
+## Network
+
+holler uses [libp2p](https://libp2p.io) for transport:
+
+- **Transports**: TCP + QUIC
+- **Security**: Noise protocol
+- **NAT traversal**: UPnP port mapping, hole punching, circuit relay
+- **Peer discovery**: Kademlia DHT (bootstraps from Protocol Labs public nodes)
+- **Protocol**: `/holler/1.0.0` — one message per stream, then ack, then close
+
+## Data Directory
+
+```
+~/.holler/
+  key.bin         Ed25519 private key (0600)
+  contacts.json   alias → PeerID map
+  inbox.jsonl     received messages (daemon mode)
+  outbox.jsonl    pending messages awaiting delivery
+```
+
+## License
+
+MIT
