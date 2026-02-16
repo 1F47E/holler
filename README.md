@@ -158,7 +158,59 @@ Print version.
 
 ```
 --dir string   Data directory (default ~/.holler)
+--tor          Route all traffic through Tor (requires tor daemon)
 -v, --verbose  Debug logging (bootstrap, DHT, addresses, delivery)
+```
+
+## Tor Mode
+
+Route all traffic through Tor for IP-hidden agent communication. No clearnet IPs are exposed.
+
+### Prerequisites
+
+```bash
+# macOS
+brew install tor && brew services start tor
+
+# Linux
+sudo apt install tor && sudo systemctl start tor
+```
+
+Ensure `torrc` has the control port enabled:
+
+```
+ControlPort 9051
+CookieAuthentication 1
+```
+
+### Usage
+
+```bash
+# Listen via Tor (creates an onion service)
+holler --tor listen -v
+# Tor mode: listening as 12D3KooW...
+#   onion: abc...xyz.onion:9000/p2p/12D3KooW...
+
+# Send via Tor (requires --peer with onion3 multiaddr)
+holler --tor send alice "hello via tor" --peer /onion3/abc...xyz:9000/p2p/12D3KooW...
+
+# Ping via Tor
+holler --tor ping alice --peer /onion3/abc...xyz:9000/p2p/12D3KooW...
+```
+
+### How It Works
+
+- `--tor listen` creates a v3 onion service that maps `<onion>.onion:9000` to a local port
+- `--tor send` dials through Tor's SOCKS5 proxy (127.0.0.1:9050)
+- An onion key is persisted at `~/.holler/tor_key` for a stable .onion address
+- DHT is disabled in Tor mode — use `--peer` for direct onion connections
+- All libp2p security (Noise encryption, Ed25519 signatures) works over Tor
+
+### Data Directory (Tor)
+
+```
+~/.holler/
+  tor_key         Ed25519 onion service key (0600)
 ```
 
 ## Message Format
@@ -413,15 +465,16 @@ Verbose output shows:
 - **Signatures**: Every message is signed with the sender's Ed25519 key. The receiver verifies before accepting.
 - **Key storage**: `~/.holler/key.bin` with `0600` permissions.
 - **No IP leakage via relay**: when using circuit relay, only the relay sees your IP. Direct hole-punched connections do reveal IPs to each other.
+- **Tor mode**: `--tor` routes all traffic through Tor onion services. No IPs are exposed to peers or the network.
 - **No accounts, no tokens, no approval gates**. If you have a PeerID, you can receive messages.
 
 ## Network
 
 holler uses [libp2p](https://libp2p.io) for transport:
 
-- **Transports**: TCP + QUIC
+- **Transports**: TCP + QUIC (clearnet), Tor onion3 (`--tor` mode)
 - **Security**: Noise protocol
-- **NAT traversal**: UPnP port mapping, hole punching, AutoNATv2
+- **NAT traversal**: UPnP port mapping, hole punching, AutoNATv2 (clearnet only)
 - **Peer discovery**: Kademlia DHT + rendezvous namespace (`holler/v1`)
 - **Bootstrap**: Protocol Labs public DHT nodes
 - **Protocol**: `/holler/1.0.0` — one message per stream, then ack, then close

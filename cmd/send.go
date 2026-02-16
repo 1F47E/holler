@@ -113,16 +113,30 @@ var sendCmd = &cobra.Command{
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 		defer cancel()
 
-		var d *dht.IpfsDHT
-		h, err := node.NewHost(ctx, privKey, &d)
-		if err != nil {
-			return err
-		}
-		defer h.Close()
+		if node.TorMode {
+			if err := node.CheckTorAvailable(); err != nil {
+				return err
+			}
 
-		// Direct peer connection (--peer flag) or DHT lookup
-		if sendPeerAddr != "" {
-			// Parse multiaddr and connect directly
+			hollerDir, err := identity.HollerDir()
+			if err != nil {
+				return err
+			}
+			onionKey, err := node.LoadOrCreateOnionKey(hollerDir)
+			if err != nil {
+				return err
+			}
+			h, _, err := node.NewHostTor(ctx, privKey, onionKey)
+			if err != nil {
+				return err
+			}
+			defer h.Close()
+
+			// Tor mode requires --peer with an onion3 multiaddr
+			if sendPeerAddr == "" {
+				return fmt.Errorf("--tor mode requires --peer with an onion3 multiaddr (DHT not supported over Tor yet)")
+			}
+
 			maddr, err := ma.NewMultiaddr(sendPeerAddr)
 			if err != nil {
 				return fmt.Errorf("invalid multiaddr: %w", err)
@@ -131,10 +145,50 @@ var sendCmd = &cobra.Command{
 			if err != nil {
 				return fmt.Errorf("parse peer addr: %w", err)
 			}
-			// Override toID from the multiaddr if it contains a peer ID
 			toID = addrInfo.ID
 			env.To = toID.String()
-			// Re-sign since To changed
+			if err := env.Sign(privKey); err != nil {
+				return err
+			}
+
+			fmt.Fprintf(os.Stderr, "Tor: connecting to %s...\n", toID.String()[:16]+"...")
+			connectCtx, connectCancel := context.WithTimeout(ctx, 120*time.Second)
+			defer connectCancel()
+			if err := h.Connect(connectCtx, *addrInfo); err != nil {
+				return fmt.Errorf("tor connect to peer: %w", err)
+			}
+
+			if err := node.SendEnvelope(ctx, h, toID, env); err != nil {
+				return fmt.Errorf("tor send: %w", err)
+			}
+
+			hollerDir2, _ := identity.HollerDir()
+			if sentData, err := json.Marshal(env); err == nil {
+				message.AppendToSent(hollerDir2, sentData)
+			}
+			fmt.Fprintf(os.Stderr, "Message sent via Tor to %s\n", toID.String()[:16]+"...")
+			return nil
+		}
+
+		// Clearnet path
+		var d *dht.IpfsDHT
+		h, err := node.NewHost(ctx, privKey, &d)
+		if err != nil {
+			return err
+		}
+		defer h.Close()
+
+		if sendPeerAddr != "" {
+			maddr, err := ma.NewMultiaddr(sendPeerAddr)
+			if err != nil {
+				return fmt.Errorf("invalid multiaddr: %w", err)
+			}
+			addrInfo, err := peer.AddrInfoFromP2pAddr(maddr)
+			if err != nil {
+				return fmt.Errorf("parse peer addr: %w", err)
+			}
+			toID = addrInfo.ID
+			env.To = toID.String()
 			if err := env.Sign(privKey); err != nil {
 				return err
 			}
@@ -144,7 +198,6 @@ var sendCmd = &cobra.Command{
 				return fmt.Errorf("connect to peer: %w", err)
 			}
 		} else {
-			// DHT discovery
 			d, err = node.NewDHT(ctx, h)
 			if err != nil {
 				return err
@@ -154,16 +207,13 @@ var sendCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "Bootstrapping DHT...\n")
 			node.WaitForBootstrap(ctx, h, d, 5*time.Second)
 
-			// Try 1: Direct DHT FindPeer
 			fmt.Fprintf(os.Stderr, "Finding peer %s via DHT...\n", toID.String()[:16]+"...")
 			addrInfo, err := node.FindPeer(ctx, d, toID)
 			if err != nil {
-				// Try 2: Rendezvous discovery
 				fmt.Fprintf(os.Stderr, "DHT lookup failed, trying rendezvous discovery...\n")
 				addrInfo, err = node.FindPeersRendezvous(ctx, h, d, toID)
 			}
 			if err != nil {
-				// All methods failed — queue to outbox
 				hollerDir, dirErr := identity.HollerDir()
 				if dirErr != nil {
 					return fmt.Errorf("peer not found and cannot save to outbox: %w", dirErr)
@@ -193,7 +243,6 @@ var sendCmd = &cobra.Command{
 			return nil
 		}
 
-		// Log sent message for history
 		hollerDir, _ := identity.HollerDir()
 		if sentData, err := json.Marshal(env); err == nil {
 			message.AppendToSent(hollerDir, sentData)

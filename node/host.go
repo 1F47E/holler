@@ -6,10 +6,13 @@ import (
 	"os"
 	"time"
 
+	"github.com/cretz/bine/control"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/transport"
 	"github.com/libp2p/go-libp2p/p2p/host/autorelay"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 
@@ -99,4 +102,49 @@ func NewHost(ctx context.Context, privKey crypto.PrivKey, dhtPtr **dht.IpfsDHT) 
 	}
 
 	return h, nil
+}
+
+// NewHostTor creates a Tor-only libp2p host. No clearnet transports, no relay,
+// no NAT traversal. All traffic goes through Tor SOCKS5 proxy.
+// The onionKey is used for the hidden service listener.
+// Returns the host and the onion service address string (56-char base32).
+func NewHostTor(ctx context.Context, privKey crypto.PrivKey, onionKey *control.ED25519Key) (host.Host, string, error) {
+	cm, err := connmgr.NewConnManager(10, 100)
+	if err != nil {
+		return nil, "", fmt.Errorf("create conn manager: %w", err)
+	}
+
+	onionAddr := OnionAddressFromKey(onionKey)
+	listenAddr := fmt.Sprintf("/onion3/%s:%d", onionAddr, onionVirtualPort)
+
+	// Constructor closure that captures the onion key.
+	// libp2p fx injects upgrader and rcmgr automatically.
+	torConstructor := func(upgrader transport.Upgrader, rcmgr network.ResourceManager) (*TorTransport, error) {
+		t, err := NewTorTransport(upgrader, rcmgr)
+		if err != nil {
+			return nil, err
+		}
+		t.SetOnionKey(onionKey)
+		return t, nil
+	}
+
+	h, err := libp2p.New(
+		libp2p.NoTransports,
+		libp2p.Transport(torConstructor),
+		libp2p.Identity(privKey),
+		libp2p.ListenAddrStrings(listenAddr),
+		libp2p.DisableRelay(),
+		libp2p.ConnectionManager(cm),
+	)
+	if err != nil {
+		return nil, "", fmt.Errorf("create tor libp2p host: %w", err)
+	}
+
+	logf("tor host created: %s", h.ID())
+	logf("tor: onion address: %s.onion:%d", onionAddr, onionVirtualPort)
+	for _, addr := range h.Addrs() {
+		logf("  listening: %s", addr)
+	}
+
+	return h, onionAddr, nil
 }

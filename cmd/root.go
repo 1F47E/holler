@@ -15,6 +15,7 @@ var rootCmd = &cobra.Command{
 func init() {
 	rootCmd.PersistentFlags().StringVar(&identity.DirOverride, "dir", "", "data directory (default ~/.holler)")
 	rootCmd.PersistentFlags().BoolVarP(&node.Verbose, "verbose", "v", false, "verbose debug logging")
+	rootCmd.PersistentFlags().BoolVar(&node.TorMode, "tor", false, "route all traffic through Tor (requires tor daemon)")
 }
 
 func Execute() error {

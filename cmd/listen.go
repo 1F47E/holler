@@ -46,18 +46,38 @@ var listenCmd = &cobra.Command{
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 		defer cancel()
 
+		var h host.Host
 		var d *dht.IpfsDHT
-		h, err := node.NewHost(ctx, privKey, &d)
-		if err != nil {
-			return err
-		}
-		defer h.Close()
 
-		d, err = node.NewDHT(ctx, h)
-		if err != nil {
-			return err
+		if node.TorMode {
+			if err := node.CheckTorAvailable(); err != nil {
+				return err
+			}
+			onionKey, err := node.LoadOrCreateOnionKey(hollerDir)
+			if err != nil {
+				return err
+			}
+			var onionAddr string
+			h, onionAddr, err = node.NewHostTor(ctx, privKey, onionKey)
+			if err != nil {
+				return err
+			}
+			defer h.Close()
+			fmt.Fprintf(os.Stderr, "Tor mode: listening as %s\n", myID.String())
+			fmt.Fprintf(os.Stderr, "  onion: %s.onion:%d/p2p/%s\n", onionAddr, 9000, myID.String())
+		} else {
+			h, err = node.NewHost(ctx, privKey, &d)
+			if err != nil {
+				return err
+			}
+			defer h.Close()
+
+			d, err = node.NewDHT(ctx, h)
+			if err != nil {
+				return err
+			}
+			defer d.Close()
 		}
-		defer d.Close()
 
 		// Register message handler
 		node.RegisterHandler(h, privKey, myID, func(env *message.Envelope) {
@@ -65,10 +85,8 @@ var listenCmd = &cobra.Command{
 			if err != nil {
 				return
 			}
-			// Always log to inbox for persistent history
 			message.AppendToInbox(hollerDir, data)
 			if !listenDaemon {
-				// Also print to stdout for piping
 				fmt.Println(string(data))
 			}
 		})
@@ -81,40 +99,38 @@ var listenCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "Daemon mode: writing to %s\n", message.InboxPath(hollerDir))
 		}
 
-		// Wait for bootstrap connections
-		node.WaitForBootstrap(ctx, h, d, 5*time.Second)
+		if !node.TorMode {
+			// Clearnet: bootstrap DHT and advertise
+			node.WaitForBootstrap(ctx, h, d, 5*time.Second)
+			node.Advertise(ctx, h, d)
+			fmt.Fprintf(os.Stderr, "Advertised on DHT — senders can now find us\n")
 
-		// Advertise on DHT so senders can find us
-		node.Advertise(ctx, h, d)
-		fmt.Fprintf(os.Stderr, "Advertised on DHT — senders can now find us\n")
-
-		// Log relay addresses if AutoRelay assigned any
-		go func() {
-			// Give AutoRelay time to find relays and get reservations
-			time.Sleep(15 * time.Second)
-			for _, addr := range h.Addrs() {
-				if node.Verbose {
-					fmt.Fprintf(os.Stderr, "[debug] address: %s/p2p/%s\n", addr, myID.String())
+			go func() {
+				time.Sleep(15 * time.Second)
+				for _, addr := range h.Addrs() {
+					if node.Verbose {
+						fmt.Fprintf(os.Stderr, "[debug] address: %s/p2p/%s\n", addr, myID.String())
+					}
 				}
-			}
-		}()
+			}()
 
-		// Start outbox retry loop
-		go retryOutboxLoop(ctx, h, d, hollerDir)
+			go retryOutboxLoop(ctx, h, d, hollerDir)
 
-		// Re-advertise periodically (DHT records expire)
-		go func() {
-			ticker := time.NewTicker(10 * time.Minute)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-ticker.C:
-					node.Advertise(ctx, h, d)
+			go func() {
+				ticker := time.NewTicker(10 * time.Minute)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-ticker.C:
+						node.Advertise(ctx, h, d)
+					}
 				}
-			}
-		}()
+			}()
+		} else {
+			fmt.Fprintf(os.Stderr, "Tor mode: DHT disabled, use --peer for direct connections\n")
+		}
 
 		<-ctx.Done()
 		fmt.Fprintf(os.Stderr, "\nShutting down...\n")
@@ -156,7 +172,6 @@ func processOutbox(ctx context.Context, h host.Host, d *dht.IpfsDHT, hollerDir s
 			continue
 		}
 
-		// Try to deliver
 		toID, err := peer.Decode(entry.Envelope.To)
 		if err != nil {
 			continue

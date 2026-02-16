@@ -54,6 +54,63 @@ var pingCmd = &cobra.Command{
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 		defer cancel()
 
+		if node.TorMode {
+			if err := node.CheckTorAvailable(); err != nil {
+				return err
+			}
+
+			hollerDir, err := identity.HollerDir()
+			if err != nil {
+				return err
+			}
+			onionKey, err := node.LoadOrCreateOnionKey(hollerDir)
+			if err != nil {
+				return err
+			}
+			h, _, err := node.NewHostTor(ctx, privKey, onionKey)
+			if err != nil {
+				return err
+			}
+			defer h.Close()
+
+			if pingPeerAddr == "" {
+				return fmt.Errorf("--tor mode requires --peer with an onion3 multiaddr")
+			}
+
+			maddr, err := ma.NewMultiaddr(pingPeerAddr)
+			if err != nil {
+				return fmt.Errorf("invalid multiaddr: %w", err)
+			}
+			addrInfo, err := peer.AddrInfoFromP2pAddr(maddr)
+			if err != nil {
+				return fmt.Errorf("parse peer addr: %w", err)
+			}
+			toID = addrInfo.ID
+
+			fmt.Fprintf(os.Stderr, "Tor: connecting to %s...\n", toID.String()[:16]+"...")
+			connectCtx, connectCancel := context.WithTimeout(ctx, 120*time.Second)
+			defer connectCancel()
+			if err := h.Connect(connectCtx, *addrInfo); err != nil {
+				fmt.Fprintf(os.Stderr, "Tor: peer %s unreachable: %v\n", toID.String()[:16]+"...", err)
+				return nil
+			}
+
+			env := message.NewEnvelope(fromID, toID, "ping", "")
+			if err := env.Sign(privKey); err != nil {
+				return err
+			}
+
+			start := time.Now()
+			if err := node.SendEnvelope(ctx, h, toID, env); err != nil {
+				fmt.Fprintf(os.Stderr, "Tor: peer %s connected but not responding: %v\n", toID.String()[:16]+"...", err)
+				return nil
+			}
+			rtt := time.Since(start)
+			fmt.Printf("pong from %s via Tor: rtt=%s\n", toID.String()[:16]+"...", rtt.Round(time.Millisecond))
+			return nil
+		}
+
+		// Clearnet path
 		var d *dht.IpfsDHT
 		h, err := node.NewHost(ctx, privKey, &d)
 		if err != nil {
@@ -101,7 +158,6 @@ var pingCmd = &cobra.Command{
 			}
 		}
 
-		// Send ping and measure round-trip
 		env := message.NewEnvelope(fromID, toID, "ping", "")
 		if err := env.Sign(privKey); err != nil {
 			return err
