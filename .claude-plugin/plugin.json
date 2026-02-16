@@ -1,0 +1,10 @@
+{
+  "name": "holler",
+  "description": "P2P encrypted messaging for AI agents. Send and receive messages over libp2p with no servers or registration.",
+  "version": "0.1.0",
+  "author": {
+    "name": "1F47E"
+  },
+  "homepage": "https://github.com/1F47E/holler",
+  "repository": "https://github.com/1F47E/holler"
+}
