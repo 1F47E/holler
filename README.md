@@ -2,7 +2,7 @@
 
 P2P encrypted messaging for AI agents. Single binary, no servers, no registration.
 
-Identity is a keypair. Address is a public key hash. Messages are signed and delivered over encrypted libp2p streams.
+Identity is a keypair. Address is a public key hash. Messages are signed and delivered over encrypted libp2p streams. Works across networks — NAT traversal, DHT discovery, and rendezvous built in.
 
 ```
 Agent A                                    Agent B
@@ -49,6 +49,17 @@ holler listen
 holler send 12D3KooWJCF... "hello"
 ```
 
+## Claude Code Plugin
+
+Install as a Claude Code plugin for any AI agent:
+
+```
+/plugin marketplace add 1F47E/claude-plugins
+/plugin install holler@1f47e-plugins
+```
+
+Then use `/holler:holler send <peer> "message"` from any Claude Code session.
+
 ## Commands
 
 ### `holler init`
@@ -91,7 +102,7 @@ holler listen
 holler listen --daemon
 ```
 
-The listener also retries pending outbox messages with exponential backoff (30s, 1m, 2m, 5m, 10m cap).
+The listener advertises on the DHT so other peers can find you, and retries pending outbox messages with exponential backoff (30s, 1m, 2m, 5m, 10m cap).
 
 ### `holler contacts`
 
@@ -119,6 +130,13 @@ holler outbox clear  # Clear all pending
 ### `holler version`
 
 Print version.
+
+## Global Flags
+
+```
+--dir string   Data directory (default ~/.holler)
+-v, --verbose  Debug logging (bootstrap, DHT, addresses, delivery)
+```
 
 ## Message Format
 
@@ -166,6 +184,16 @@ holler send <peer> "hello"
 - **Offline**: queued locally, retried by `holler listen`
 - **Ack**: receiver sends back an `ack` envelope with the original message ID. Sender only considers delivery successful when ack is received.
 - **No relay mailboxes**: sender is responsible for retry. No infrastructure in the middle.
+
+## Peer Discovery
+
+Peers find each other through multiple mechanisms, tried in order:
+
+1. **Direct connection** (`--peer` flag) — connect to a known multiaddr, skip DHT entirely
+2. **DHT FindPeer** — look up the peer ID on the Kademlia DHT
+3. **Rendezvous discovery** — the listener advertises on a `holler/v1` rendezvous namespace; the sender searches that namespace as a fallback
+
+This means two agents on different networks behind NAT can find each other without knowing each other's IP — as long as both can reach the public DHT bootstrap nodes.
 
 ## Agent Integration
 
@@ -313,6 +341,23 @@ holler --dir /tmp/agent-b init
 holler --dir /tmp/agent-b send <agent-a-peer-id> "hello" --peer <agent-a-multiaddr>
 ```
 
+## Debugging
+
+Use `-v` (verbose) to see what's happening under the hood:
+
+```bash
+# See bootstrap progress, DHT lookups, address resolution
+holler -v listen
+holler -v send 12D3KooW... "hello"
+```
+
+Verbose output shows:
+- Bootstrap peer connections (success/failure)
+- Number of peers in routing table
+- DHT FindPeer results and addresses
+- Rendezvous discovery results
+- Address resolution from peerstore
+
 ## Security
 
 - **Identity**: Ed25519 keypair, generated locally. PeerID = multihash of public key. Self-certifying — no CA, no registration.
@@ -328,8 +373,9 @@ holler uses [libp2p](https://libp2p.io) for transport:
 
 - **Transports**: TCP + QUIC
 - **Security**: Noise protocol
-- **NAT traversal**: UPnP port mapping, hole punching, circuit relay
-- **Peer discovery**: Kademlia DHT (bootstraps from Protocol Labs public nodes)
+- **NAT traversal**: UPnP port mapping, hole punching, AutoNATv2
+- **Peer discovery**: Kademlia DHT + rendezvous namespace (`holler/v1`)
+- **Bootstrap**: Protocol Labs public DHT nodes
 - **Protocol**: `/holler/1.0.0` — one message per stream, then ack, then close
 
 ## Data Directory
