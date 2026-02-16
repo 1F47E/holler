@@ -12,15 +12,20 @@ import (
 )
 
 // Envelope is the JSONL message format for holler.
+//
+// Type can be: message, ack, ping, task-proposal, task-result,
+// capability-query, status-update, or any custom string.
 type Envelope struct {
-	V    int    `json:"v"`
-	ID   string `json:"id"`
-	From string `json:"from"`
-	To   string `json:"to"`
-	Ts   int64  `json:"ts"`
-	Type string `json:"type"`
-	Body string `json:"body"`
-	Sig  string `json:"sig"`
+	V       int               `json:"v"`
+	ID      string            `json:"id"`
+	From    string            `json:"from"`
+	To      string            `json:"to"`
+	Ts      int64             `json:"ts"`
+	Type    string            `json:"type"`
+	Body    string            `json:"body"`
+	ReplyTo string            `json:"reply_to,omitempty"`
+	Meta    map[string]string `json:"meta,omitempty"`
+	Sig     string            `json:"sig"`
 }
 
 // NewEnvelope creates a new unsigned envelope.
@@ -36,9 +41,14 @@ func NewEnvelope(from, to peer.ID, msgType, body string) *Envelope {
 	}
 }
 
-// signPayload returns the bytes to sign: id+from+to+ts+type+body.
+// signPayload returns the bytes to sign: id+from+to+ts+type+body+reply_to+meta.
 func (e *Envelope) signPayload() []byte {
-	return []byte(fmt.Sprintf("%s%s%s%d%s%s", e.ID, e.From, e.To, e.Ts, e.Type, e.Body))
+	payload := fmt.Sprintf("%s%s%s%d%s%s%s", e.ID, e.From, e.To, e.Ts, e.Type, e.Body, e.ReplyTo)
+	if len(e.Meta) > 0 {
+		metaJSON, _ := json.Marshal(e.Meta)
+		payload += string(metaJSON)
+	}
+	return []byte(payload)
 }
 
 // Sign signs the envelope with the given private key.

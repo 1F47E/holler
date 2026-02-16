@@ -22,11 +22,17 @@ import (
 var (
 	sendStdin    bool
 	sendPeerAddr string
+	sendType     string
+	sendReplyTo  string
+	sendMeta     []string
 )
 
 func init() {
 	sendCmd.Flags().BoolVar(&sendStdin, "stdin", false, "Read message body from stdin")
 	sendCmd.Flags().StringVar(&sendPeerAddr, "peer", "", "Direct multiaddr of the peer (skip DHT lookup)")
+	sendCmd.Flags().StringVar(&sendType, "type", "message", "Message type (message, task-proposal, task-result, capability-query, status-update)")
+	sendCmd.Flags().StringVar(&sendReplyTo, "reply-to", "", "Message ID this is replying to (for threading)")
+	sendCmd.Flags().StringSliceVar(&sendMeta, "meta", nil, "Metadata key=value pairs (can be repeated)")
 	rootCmd.AddCommand(sendCmd)
 }
 
@@ -78,7 +84,16 @@ var sendCmd = &cobra.Command{
 		}
 
 		// Create and sign envelope
-		env := message.NewEnvelope(fromID, toID, "message", body)
+		env := message.NewEnvelope(fromID, toID, sendType, body)
+		env.ReplyTo = sendReplyTo
+		if len(sendMeta) > 0 {
+			env.Meta = make(map[string]string)
+			for _, kv := range sendMeta {
+				if k, v, ok := strings.Cut(kv, "="); ok {
+					env.Meta[k] = v
+				}
+			}
+		}
 		if err := env.Sign(privKey); err != nil {
 			return err
 		}
