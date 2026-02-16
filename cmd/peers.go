@@ -8,6 +8,8 @@ import (
 	"os/signal"
 	"time"
 
+	dht "github.com/libp2p/go-libp2p-kad-dht"
+
 	"github.com/1F47E/holler/identity"
 	"github.com/1F47E/holler/node"
 	"github.com/spf13/cobra"
@@ -29,13 +31,14 @@ var peersCmd = &cobra.Command{
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 		defer cancel()
 
-		h, err := node.NewHost(ctx, privKey)
+		var d *dht.IpfsDHT
+		h, err := node.NewHost(ctx, privKey, &d)
 		if err != nil {
 			return err
 		}
 		defer h.Close()
 
-		d, err := node.NewDHT(ctx, h)
+		d, err = node.NewDHT(ctx, h)
 		if err != nil {
 			return err
 		}

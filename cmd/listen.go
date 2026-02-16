@@ -46,13 +46,14 @@ var listenCmd = &cobra.Command{
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 		defer cancel()
 
-		h, err := node.NewHost(ctx, privKey)
+		var d *dht.IpfsDHT
+		h, err := node.NewHost(ctx, privKey, &d)
 		if err != nil {
 			return err
 		}
 		defer h.Close()
 
-		d, err := node.NewDHT(ctx, h)
+		d, err = node.NewDHT(ctx, h)
 		if err != nil {
 			return err
 		}
@@ -85,6 +86,17 @@ var listenCmd = &cobra.Command{
 		// Advertise on DHT so senders can find us
 		node.Advertise(ctx, h, d)
 		fmt.Fprintf(os.Stderr, "Advertised on DHT — senders can now find us\n")
+
+		// Log relay addresses if AutoRelay assigned any
+		go func() {
+			// Give AutoRelay time to find relays and get reservations
+			time.Sleep(15 * time.Second)
+			for _, addr := range h.Addrs() {
+				if node.Verbose {
+					fmt.Fprintf(os.Stderr, "[debug] address: %s/p2p/%s\n", addr, myID.String())
+				}
+			}
+		}()
 
 		// Start outbox retry loop
 		go retryOutboxLoop(ctx, h, d, hollerDir)

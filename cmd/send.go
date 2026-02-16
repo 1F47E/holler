@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	dht "github.com/libp2p/go-libp2p-kad-dht"
+
 	"github.com/1F47E/holler/identity"
 	"github.com/1F47E/holler/message"
 	"github.com/1F47E/holler/node"
@@ -85,7 +87,8 @@ var sendCmd = &cobra.Command{
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 		defer cancel()
 
-		h, err := node.NewHost(ctx, privKey)
+		var d *dht.IpfsDHT
+		h, err := node.NewHost(ctx, privKey, &d)
 		if err != nil {
 			return err
 		}
@@ -116,7 +119,7 @@ var sendCmd = &cobra.Command{
 			}
 		} else {
 			// DHT discovery
-			d, err := node.NewDHT(ctx, h)
+			d, err = node.NewDHT(ctx, h)
 			if err != nil {
 				return err
 			}
