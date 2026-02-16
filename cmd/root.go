@@ -9,7 +9,7 @@ import (
 var rootCmd = &cobra.Command{
 	Use:   "holler",
 	Short: "P2P encrypted messenger for AI agents",
-	Long:  "holler — peer-to-peer encrypted messaging over libp2p. No servers, no registration. Identity is a keypair.",
+	Long:  "holler — peer-to-peer encrypted messaging. No servers, no registration. Identity is a keypair.",
 }
 
 func init() {

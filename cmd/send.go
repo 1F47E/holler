@@ -18,6 +18,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	ma "github.com/multiformats/go-multiaddr"
 	"github.com/spf13/cobra"
+
 )
 
 var (
@@ -64,7 +65,15 @@ var sendCmd = &cobra.Command{
 			body = strings.Join(args[1:], " ")
 		}
 
-		// Load identity
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+		defer cancel()
+
+		// Tor mode: entirely separate path
+		if node.TorMode {
+			return sendViaTor(ctx, target, body)
+		}
+
+		// Clearnet: load identity and resolve contacts
 		privKey, err := identity.LoadOrFail()
 		if err != nil {
 			return err
@@ -74,7 +83,6 @@ var sendCmd = &cobra.Command{
 			return err
 		}
 
-		// Resolve alias
 		contacts, err := identity.LoadContacts()
 		if err != nil {
 			return err
@@ -86,7 +94,6 @@ var sendCmd = &cobra.Command{
 			return fmt.Errorf("invalid peer ID %q: %w", resolved, err)
 		}
 
-		// Create and sign envelope
 		env := message.NewEnvelope(fromID, toID, sendType, body)
 		env.ReplyTo = sendReplyTo
 		switch {
@@ -107,67 +114,6 @@ var sendCmd = &cobra.Command{
 		}
 		if err := env.Sign(privKey); err != nil {
 			return err
-		}
-
-		// Start libp2p host
-		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
-		defer cancel()
-
-		if node.TorMode {
-			if err := node.CheckTorAvailable(); err != nil {
-				return err
-			}
-
-			hollerDir, err := identity.HollerDir()
-			if err != nil {
-				return err
-			}
-			onionKey, err := node.LoadOrCreateOnionKey(hollerDir)
-			if err != nil {
-				return err
-			}
-			h, _, err := node.NewHostTor(ctx, privKey, onionKey)
-			if err != nil {
-				return err
-			}
-			defer h.Close()
-
-			// Tor mode requires --peer with an onion3 multiaddr
-			if sendPeerAddr == "" {
-				return fmt.Errorf("--tor mode requires --peer with an onion3 multiaddr (DHT not supported over Tor yet)")
-			}
-
-			maddr, err := ma.NewMultiaddr(sendPeerAddr)
-			if err != nil {
-				return fmt.Errorf("invalid multiaddr: %w", err)
-			}
-			addrInfo, err := peer.AddrInfoFromP2pAddr(maddr)
-			if err != nil {
-				return fmt.Errorf("parse peer addr: %w", err)
-			}
-			toID = addrInfo.ID
-			env.To = toID.String()
-			if err := env.Sign(privKey); err != nil {
-				return err
-			}
-
-			fmt.Fprintf(os.Stderr, "Tor: connecting to %s...\n", toID.String()[:16]+"...")
-			connectCtx, connectCancel := context.WithTimeout(ctx, 120*time.Second)
-			defer connectCancel()
-			if err := h.Connect(connectCtx, *addrInfo); err != nil {
-				return fmt.Errorf("tor connect to peer: %w", err)
-			}
-
-			if err := node.SendEnvelope(ctx, h, toID, env); err != nil {
-				return fmt.Errorf("tor send: %w", err)
-			}
-
-			hollerDir2, _ := identity.HollerDir()
-			if sentData, err := json.Marshal(env); err == nil {
-				message.AppendToSent(hollerDir2, sentData)
-			}
-			fmt.Fprintf(os.Stderr, "Message sent via Tor to %s\n", toID.String()[:16]+"...")
-			return nil
 		}
 
 		// Clearnet path
@@ -251,4 +197,90 @@ var sendCmd = &cobra.Command{
 		fmt.Fprintf(os.Stderr, "Message sent to %s\n", toID.String()[:16]+"...")
 		return nil
 	},
+}
+
+func sendViaTor(ctx context.Context, target, body string) error {
+	if err := node.CheckTorSOCKS(); err != nil {
+		return err
+	}
+
+	hollerDir, err := identity.HollerDir()
+	if err != nil {
+		return err
+	}
+	onionKey, err := node.LoadOrCreateOnionKey(hollerDir)
+	if err != nil {
+		return err
+	}
+	myOnion := identity.OnionAddrFromKey(onionKey)
+	kp := identity.OnionKeyPairFromBine(onionKey)
+
+	// Resolve target via tor contacts
+	torContacts, err := identity.LoadTorContacts()
+	if err != nil {
+		return err
+	}
+	toOnion := torContacts.Resolve(target)
+
+	// Validate it looks like an onion address (56 chars)
+	if len(toOnion) != 56 {
+		return fmt.Errorf("cannot resolve %q to a Tor contact — add it with: holler contacts add --tor %s <onion-address>", target, target)
+	}
+
+	// Build envelope
+	env := message.NewEnvelopeTor(myOnion, toOnion, sendType, body)
+	env.ReplyTo = sendReplyTo
+	switch {
+	case sendThread != "":
+		env.ThreadID = sendThread
+	case sendReplyTo != "":
+		env.ThreadID = sendReplyTo
+	default:
+		env.ThreadID = env.ID
+	}
+	if len(sendMeta) > 0 {
+		env.Meta = make(map[string]string)
+		for _, kv := range sendMeta {
+			if k, v, ok := strings.Cut(kv, "="); ok {
+				env.Meta[k] = v
+			}
+		}
+	}
+	if err := env.SignTor(kp); err != nil {
+		return fmt.Errorf("sign message: %w", err)
+	}
+
+	// Dial and send
+	fmt.Fprintf(os.Stderr, "Tor: connecting to %s.onion...\n", toOnion[:16])
+	connectCtx, connectCancel := context.WithTimeout(ctx, 120*time.Second)
+	defer connectCancel()
+
+	conn, err := node.DialTor(connectCtx, toOnion, 9000)
+	if err != nil {
+		// Queue to outbox
+		message.SaveToOutbox(hollerDir, env)
+		fmt.Fprintf(os.Stderr, "Tor: peer unreachable — message queued in outbox\n")
+		return nil
+	}
+	defer conn.Close()
+
+	if err := node.SendTor(conn, env); err != nil {
+		message.SaveToOutbox(hollerDir, env)
+		fmt.Fprintf(os.Stderr, "Tor: send failed — message queued in outbox: %v\n", err)
+		return nil
+	}
+
+	// Wait for ack
+	ack, err := node.RecvTor(conn)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Tor: no ack received (message likely delivered): %v\n", err)
+	} else if ack.Type == "ack" && ack.Body == env.ID {
+		// Good
+	}
+
+	if sentData, err := json.Marshal(env); err == nil {
+		message.AppendToSent(hollerDir, sentData)
+	}
+	fmt.Fprintf(os.Stderr, "Message sent via Tor to %s.onion\n", toOnion[:16])
+	return nil
 }
