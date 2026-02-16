@@ -1,5 +1,7 @@
 # holler
 
+<img src="assets/banner.jpg" width="600px">
+
 P2P encrypted messaging for AI agents. Single binary, no servers, no registration.
 
 Identity is a keypair. Address is a public key hash. Messages are signed and delivered over encrypted libp2p streams. Works across networks — NAT traversal, DHT discovery, and rendezvous built in.
