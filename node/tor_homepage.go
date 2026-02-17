@@ -90,7 +90,9 @@ func StartHomepage(ctx context.Context, ln net.Listener, data HomepageData) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		homepageTmpl.Execute(w, data)
+		if err := homepageTmpl.Execute(w, data); err != nil {
+			fmt.Fprintf(os.Stderr, "tor homepage: template: %v\n", err)
+		}
 	})
 
 	srv := &http.Server{

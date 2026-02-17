@@ -61,8 +61,9 @@ func NewEnvelopeTor(fromOnion, toOnion string, msgType, body string) *Envelope {
 func (e *Envelope) signPayload() []byte {
 	payload := fmt.Sprintf("%s%s%s%d%s%s%s", e.ID, e.From, e.To, e.Ts, e.Type, e.Body, e.ReplyTo)
 	if len(e.Meta) > 0 {
-		metaJSON, _ := json.Marshal(e.Meta)
-		payload += string(metaJSON)
+		if metaJSON, err := json.Marshal(e.Meta); err == nil {
+			payload += string(metaJSON)
+		}
 	}
 	return []byte(payload)
 }

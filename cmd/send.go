@@ -222,8 +222,8 @@ func sendViaTor(ctx context.Context, target, body string) error {
 	}
 	toOnion := torContacts.Resolve(target)
 
-	// Validate it looks like an onion address (56 chars)
-	if len(toOnion) != 56 {
+	// Validate onion address format
+	if !identity.ValidOnionAddr(toOnion) {
 		return fmt.Errorf("cannot resolve %q to a Tor contact — add it with: holler contacts add --tor %s <onion-address>", target, target)
 	}
 
@@ -270,12 +270,14 @@ func sendViaTor(ctx context.Context, target, body string) error {
 		return nil
 	}
 
-	// Wait for ack
+	// Wait for ack and verify signature
 	ack, err := node.RecvTor(conn)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Tor: no ack received (message likely delivered): %v\n", err)
 	} else if ack.Type == "ack" && ack.Body == env.ID {
-		// Good
+		if valid, verr := ack.VerifyTor(); verr != nil || !valid {
+			fmt.Fprintf(os.Stderr, "Tor: ack signature invalid\n")
+		}
 	}
 
 	if sentData, err := json.Marshal(env); err == nil {

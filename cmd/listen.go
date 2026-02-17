@@ -276,27 +276,12 @@ func processOutboxTor(ctx context.Context, hollerDir string) {
 			continue
 		}
 
-		connectCtx, connectCancel := context.WithTimeout(ctx, 120*time.Second)
-		conn, err := node.DialTor(connectCtx, toOnion, 9000)
-		connectCancel()
-		if err != nil {
+		if err := deliverTorOutboxEntry(ctx, toOnion, entry.Envelope); err != nil {
 			entry.Attempts++
 			entry.NextRetry = time.Now().Add(message.NextBackoff(entry.Attempts)).Unix()
 			remaining = append(remaining, entry)
 			continue
 		}
-
-		if err := node.SendTor(conn, entry.Envelope); err != nil {
-			conn.Close()
-			entry.Attempts++
-			entry.NextRetry = time.Now().Add(message.NextBackoff(entry.Attempts)).Unix()
-			remaining = append(remaining, entry)
-			continue
-		}
-
-		// Wait for ack (best effort)
-		node.RecvTor(conn)
-		conn.Close()
 
 		delivered++
 		fmt.Fprintf(os.Stderr, "outbox: delivered message %s to %s.onion\n", entry.Envelope.ID, toOnion[:16])
@@ -308,4 +293,22 @@ func processOutboxTor(ctx context.Context, hollerDir string) {
 	if err := message.WriteOutbox(hollerDir, remaining); err != nil {
 		fmt.Fprintf(os.Stderr, "outbox: failed to write: %v\n", err)
 	}
+}
+
+func deliverTorOutboxEntry(ctx context.Context, toOnion string, env *message.Envelope) error {
+	connectCtx, connectCancel := context.WithTimeout(ctx, 120*time.Second)
+	defer connectCancel()
+
+	conn, err := node.DialTor(connectCtx, toOnion, 9000)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	if err := node.SendTor(conn, env); err != nil {
+		return err
+	}
+	// Wait for ack (best effort)
+	node.RecvTor(conn)
+	return nil
 }

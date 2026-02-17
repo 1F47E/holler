@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"regexp"
 
 	"github.com/1F47E/holler/identity"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -19,8 +18,6 @@ func init() {
 	contactsCmd.AddCommand(contactsRmCmd)
 	rootCmd.AddCommand(contactsCmd)
 }
-
-var onionAddrRegex = regexp.MustCompile(`^[a-z2-7]{56}$`)
 
 var contactsCmd = &cobra.Command{
 	Use:   "contacts",
@@ -116,7 +113,7 @@ func listTorContacts() error {
 }
 
 func addTorContact(alias, onionAddr string) error {
-	if !onionAddrRegex.MatchString(onionAddr) {
+	if !identity.ValidOnionAddr(onionAddr) {
 		return fmt.Errorf("invalid onion address: must be 56 characters, lowercase a-z and 2-7")
 	}
 

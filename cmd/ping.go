@@ -147,7 +147,7 @@ func pingViaTor(ctx context.Context, target string) error {
 		return err
 	}
 	toOnion := torContacts.Resolve(target)
-	if len(toOnion) != 56 {
+	if !identity.ValidOnionAddr(toOnion) {
 		return fmt.Errorf("cannot resolve %q to a Tor contact — add it with: holler contacts add --tor %s <onion-address>", target, target)
 	}
 
@@ -181,6 +181,10 @@ func pingViaTor(ctx context.Context, target string) error {
 	rtt := time.Since(start)
 
 	if ack.Type == "ack" {
+		if valid, verr := ack.VerifyTor(); verr != nil || !valid {
+			fmt.Fprintf(os.Stderr, "Tor: ack signature invalid\n")
+			return nil
+		}
 		fmt.Printf("pong from %s.onion via Tor: rtt=%s\n", toOnion[:16], rtt.Round(time.Millisecond))
 	} else {
 		fmt.Fprintf(os.Stderr, "Tor: unexpected response type: %s\n", ack.Type)

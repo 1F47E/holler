@@ -106,6 +106,11 @@ func handleTorConn(conn net.Conn, myOnionAddr string, myKeyPair bineed25519.KeyP
 	// Send ack
 	ack := message.NewEnvelopeTor(myOnionAddr, env.From, "ack", env.ID)
 	ack.ThreadID = env.ThreadID
-	ack.SignTor(myKeyPair)
-	SendTor(conn, ack)
+	if err := ack.SignTor(myKeyPair); err != nil {
+		logf("tor: sign ack: %v", err)
+		return
+	}
+	if err := SendTor(conn, ack); err != nil {
+		logf("tor: send ack: %v", err)
+	}
 }

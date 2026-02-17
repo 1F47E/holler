@@ -5,8 +5,16 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 )
+
+var onionAddrRegex = regexp.MustCompile(`^[a-z2-7]{56}$`)
+
+// ValidOnionAddr checks if s is a valid 56-char base32 v3 onion service ID.
+func ValidOnionAddr(s string) bool {
+	return onionAddrRegex.MatchString(s)
+}
 
 const torContactsFile = "tor_contacts.json"
 
