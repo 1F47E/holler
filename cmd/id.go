@@ -14,25 +14,17 @@ func init() {
 
 var idCmd = &cobra.Command{
 	Use:   "id",
-	Short: "Print your PeerID and onion address",
+	Short: "Print your onion address",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		key, err := identity.LoadOrFail()
+		hollerDir, err := identity.HollerDir()
 		if err != nil {
 			return err
 		}
-		pid, err := identity.PeerIDFromKey(key)
+		onionKey, err := node.LoadOrCreateOnionKey(hollerDir)
 		if err != nil {
-			return err
+			return fmt.Errorf("no identity — run 'holler init' first: %w", err)
 		}
-		fmt.Printf("PeerID: %s\n", pid.String())
-
-		// Show onion address if tor_key exists
-		hollerDir, dirErr := identity.HollerDir()
-		if dirErr == nil {
-			if onionKey, keyErr := node.LoadOrCreateOnionKey(hollerDir); keyErr == nil {
-				fmt.Printf("Onion:  %s.onion\n", identity.OnionAddrFromKey(onionKey))
-			}
-		}
+		fmt.Printf("%s.onion\n", identity.OnionAddrFromKey(onionKey))
 		return nil
 	},
 }

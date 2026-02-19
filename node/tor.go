@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/textproto"
+	"strings"
 
 	"github.com/cretz/bine/control"
 	"golang.org/x/net/proxy"
@@ -80,7 +81,7 @@ func ListenTor(onionKey *control.ED25519Key, onionAddr string) (*TorNode, error)
 	}
 	logf("tor: onion service created: %s.onion (ports %d, %d)", resp.ServiceID, torMsgPort, torHTTPPort)
 
-	if resp.ServiceID != onionAddr {
+	if !strings.EqualFold(resp.ServiceID, onionAddr) {
 		msgLn.Close()
 		httpLn.Close()
 		ctrl.Close()

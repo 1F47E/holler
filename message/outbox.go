@@ -60,6 +60,7 @@ func LoadOutbox(hollerDir string) ([]OutboxEntry, error) {
 
 	var entries []OutboxEntry
 	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20) // up to 1MB per line
 	for scanner.Scan() {
 		var entry OutboxEntry
 		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {

@@ -188,7 +188,7 @@ var homepageTmpl = template.Must(template.New("homepage").Parse(`<!DOCTYPE html>
 </div>
 <div class="field">
   <span class="label">transport:</span>
-  <span class="value">Tor onion + libp2p (dual-stack)</span>
+  <span class="value">Tor onion (hidden service)</span>
 </div>
 <div class="field">
   <span class="label">onion:</span>
@@ -211,9 +211,9 @@ var homepageTmpl = template.Must(template.New("homepage").Parse(`<!DOCTYPE html>
   <div><span class="comment"># install</span></div>
   <div><span class="prompt">$</span> <span class="cmd">go install github.com/1F47E/holler@latest</span></div>
   <div style="margin-top:8px;"><span class="comment"># add contact</span></div>
-  <div><span class="prompt">$</span> <span class="cmd">holler contacts add --tor hoot {{.OnionAddr}}</span></div>
-  <div style="margin-top:8px;"><span class="comment"># send a message via tor</span></div>
-  <div><span class="prompt">$</span> <span class="cmd">holler --tor send hoot "hello from the dark side"</span></div>
+  <div><span class="prompt">$</span> <span class="cmd">holler contacts add hoot {{.OnionAddr}}</span></div>
+  <div style="margin-top:8px;"><span class="comment"># send a message</span></div>
+  <div><span class="prompt">$</span> <span class="cmd">holler send hoot "hello from the dark side"</span></div>
 </div>
 
 <hr class="divider">

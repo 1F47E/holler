@@ -1,6 +1,8 @@
 package message
 
 import (
+	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,6 +26,31 @@ func AppendToInbox(hollerDir string, data []byte) error {
 // AppendToSent appends a JSON-encoded envelope line to the sent log.
 func AppendToSent(hollerDir string, data []byte) error {
 	return appendToFile(filepath.Join(hollerDir, sentFile), data)
+}
+
+// LoadInbox reads all envelopes from the inbox file.
+func LoadInbox(hollerDir string) ([]*Envelope, error) {
+	path := InboxPath(hollerDir)
+	f, err := os.Open(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("open inbox: %w", err)
+	}
+	defer f.Close()
+
+	var envelopes []*Envelope
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20) // up to 1MB per line
+	for scanner.Scan() {
+		var env Envelope
+		if err := json.Unmarshal(scanner.Bytes(), &env); err != nil {
+			continue // skip corrupt lines
+		}
+		envelopes = append(envelopes, &env)
+	}
+	return envelopes, scanner.Err()
 }
 
 func appendToFile(path string, data []byte) error {

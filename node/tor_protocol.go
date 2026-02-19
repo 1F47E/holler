@@ -30,7 +30,9 @@ func SendTor(conn net.Conn, env *message.Envelope) error {
 		return fmt.Errorf("message too large: %d bytes (max %d)", len(data), maxMessageSize)
 	}
 
-	conn.SetWriteDeadline(time.Now().Add(writeTimeout))
+	if err := conn.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+		return fmt.Errorf("set write deadline: %w", err)
+	}
 
 	// Write length prefix
 	var lenBuf [4]byte
@@ -47,7 +49,9 @@ func SendTor(conn net.Conn, env *message.Envelope) error {
 
 // RecvTor reads an envelope from a raw TCP connection using length-prefixed framing.
 func RecvTor(conn net.Conn) (*message.Envelope, error) {
-	conn.SetReadDeadline(time.Now().Add(readTimeout))
+	if err := conn.SetReadDeadline(time.Now().Add(readTimeout)); err != nil {
+		return nil, fmt.Errorf("set read deadline: %w", err)
+	}
 
 	// Read length prefix
 	var lenBuf [4]byte
@@ -95,7 +99,7 @@ func handleTorConn(conn net.Conn, myOnionAddr string, myKeyPair bineed25519.KeyP
 		return
 	}
 
-	valid, err := env.VerifyTor()
+	valid, err := env.Verify()
 	if err != nil || !valid {
 		logf("tor: invalid signature from %s", env.From)
 		return
@@ -104,9 +108,9 @@ func handleTorConn(conn net.Conn, myOnionAddr string, myKeyPair bineed25519.KeyP
 	handler(env)
 
 	// Send ack
-	ack := message.NewEnvelopeTor(myOnionAddr, env.From, "ack", env.ID)
+	ack := message.NewEnvelope(myOnionAddr, env.From, "ack", env.ID)
 	ack.ThreadID = env.ThreadID
-	if err := ack.SignTor(myKeyPair); err != nil {
+	if err := ack.Sign(myKeyPair); err != nil {
 		logf("tor: sign ack: %v", err)
 		return
 	}

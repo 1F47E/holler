@@ -6,9 +6,6 @@ import (
 	"time"
 )
 
-// TorMode enables Tor transport mode (set by --tor flag).
-var TorMode bool
-
 // CheckTorSOCKS verifies the Tor SOCKS5 proxy is reachable (port 9050).
 // Needed for dialing (send/ping).
 func CheckTorSOCKS() error {
