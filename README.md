@@ -141,7 +141,7 @@ holler daemon status   # Show daemon status (PID, uptime)
 holler daemon log      # View daemon log
 ```
 
-The daemon writes received messages to `~/.holler/inbox.jsonl` and runs the `on-receive` hook for each message.
+The daemon writes received messages to `~/.holler/inbox.jsonl` and runs the `on-receive` hook for each message. It monitors the Tor control connection with periodic health checks (every 30s) and automatically reconnects with exponential backoff if Tor restarts or the connection drops.
 
 ### `holler inbox`
 

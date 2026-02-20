@@ -126,6 +126,18 @@ func (tn *TorNode) Close() error {
 	return firstErr
 }
 
+// Ping checks if the Tor control connection is still alive by querying GETINFO version.
+func (tn *TorNode) Ping() error {
+	if tn.ctrl == nil {
+		return fmt.Errorf("tor: control connection is nil")
+	}
+	_, err := tn.ctrl.GetInfo("version")
+	if err != nil {
+		return fmt.Errorf("tor: control ping failed: %w", err)
+	}
+	return nil
+}
+
 // DialTor connects to a remote onion address via Tor SOCKS5 proxy.
 func DialTor(ctx context.Context, onionAddr string, port int) (net.Conn, error) {
 	target := fmt.Sprintf("%s.onion:%d", onionAddr, port)
